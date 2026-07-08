@@ -5,7 +5,7 @@ Small Node.js CLI for AI-assisted GitHub management. The first version only mana
 ## Install locally
 
 ```bash
-cd ~/workspace/gh-ai-client
+cd ~/workspace/repos/gh-ai-client
 npm install
 npm link
 ```
@@ -27,8 +27,10 @@ gh-ai-client auth status
 gh-ai-client auth clear-token
 
 gh-ai-client model list
+gh-ai-client model list codex
 gh-ai-client model list pi openai
 gh-ai-client model use mock
+gh-ai-client model use codex
 gh-ai-client model use pi:openai/gpt-4o-mini
 gh-ai-client model use openai-compatible:env
 gh-ai-client model current
@@ -94,19 +96,21 @@ OPENAI_COMPATIBLE_MODEL=...
 ```bash
 gh-ai-client model list pi
 gh-ai-client model list pi anthropic --limit 10
+gh-ai-client model list codex
+gh-ai-client model use codex
 gh-ai-client model use pi:openai/gpt-4o-mini
 gh-ai-client ai suggest --provider pi
 ```
 
-The selected pi provider still needs its own API key/configuration available to pi.
+`model use codex` selects the recommended OpenAI Codex model exposed by pi, such as `openai/gpt-5.3-codex` when available. The selected pi provider still needs its own API key/configuration available to pi.
 
 ## Suggested workflow
 
 ```bash
 gh-ai-client auth set-token
 gh-ai-client stars sync
-gh-ai-client model use pi:openai/gpt-4o-mini
-gh-ai-client ai suggest --provider pi
+gh-ai-client model use codex
+gh-ai-client ai suggest
 gh-ai-client ai review
 ```
 

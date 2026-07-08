@@ -3,6 +3,7 @@ import { readConfig, readJson, writeJson } from "./storage.js";
 export const MODEL_PRESETS = [
   { provider: "mock", model: "local-rules", note: "No external model; groups by language/topics." },
   { provider: "pi", model: "openai/gpt-4o-mini", note: "Uses @earendil-works/pi-ai built-in providers." },
+  { provider: "codex", model: "auto", note: "Alias for the recommended OpenAI Codex model through pi." },
   { provider: "openai-compatible", model: "env", note: "Uses OPENAI_COMPATIBLE_* environment variables." }
 ];
 
@@ -129,7 +130,7 @@ async function piSuggest(ai, stars, collections) {
   }
   const auth = await models.getAuth(model);
   if (!auth) {
-    throw new Error(`pi model ${provider}/${modelId} is not configured. Set the provider API key environment variable, or run: gh-ai-client model use mock`);
+    throw new Error(`pi model ${provider}/${modelId} is not configured. ${piAuthHint(provider)} Or run: gh-ai-client model use mock`);
   }
   const response = await models.completeSimple(model, {
     systemPrompt: "You organize GitHub starred repositories. Return only strict JSON with collections.",
@@ -163,12 +164,44 @@ export async function listPiModels(provider = "") {
   );
 }
 
+export async function listCodexModels() {
+  const rows = await listPiModels("openai");
+  return rows
+    .filter((model) => model.id.toLowerCase().includes("codex"))
+    .sort((left, right) => codexModelScore(right.id) - codexModelScore(left.id));
+}
+
+export async function recommendedCodexModel() {
+  const models = await listCodexModels();
+  const exactCodex = models.find((model) => /^gpt-\d+(?:\.\d+)?-codex$/i.test(model.id));
+  const selected = exactCodex || models[0];
+  if (!selected) throw new Error("No Codex model was found in pi's OpenAI model list.");
+  return selected;
+}
+
 function extractText(message) {
   return (message.content || [])
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n")
     .trim();
+}
+
+function codexModelScore(id) {
+  const match = id.match(/^gpt-(\d+)(?:\.(\d+))?-codex(?:-(.+))?$/i);
+  if (!match) return 0;
+  const major = Number(match[1] || 0);
+  const minor = Number(match[2] || 0);
+  const suffix = match[3] || "";
+  const variantScore = suffix === "" ? 100 : suffix === "max" ? 80 : suffix === "spark" ? 70 : suffix === "mini" ? 50 : 10;
+  return major * 10000 + minor * 100 + variantScore;
+}
+
+function piAuthHint(provider) {
+  if (provider === "openai") return "Set OPENAI_API_KEY in this shell.";
+  if (provider === "anthropic") return "Set ANTHROPIC_API_KEY in this shell.";
+  if (provider === "google") return "Set GEMINI_API_KEY or GOOGLE_API_KEY in this shell.";
+  return "Set the provider API key environment variable.";
 }
 
 function buildMessages(stars, collections) {

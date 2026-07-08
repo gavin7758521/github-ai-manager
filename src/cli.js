@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { readFile, writeFile } from "node:fs/promises";
 import { applySuggestions, readCollections, writeCollections, addRepoToCollection, removeRepoFromCollection, ensureCollection } from "./collections.js";
 import { listStarredRepos, starRepo, tokenFromConfig, unstarRepo, validateToken } from "./github.js";
-import { MODEL_PRESETS, listPiModels, suggestCollections } from "./ai.js";
+import { MODEL_PRESETS, listCodexModels, listPiModels, recommendedCodexModel, suggestCollections } from "./ai.js";
 import { DATA_DIR, appendHistory, dataPath, readConfig, readJson, removeData, writeConfig, writeJson } from "./storage.js";
 
 export async function main(argv) {
@@ -25,7 +25,7 @@ export async function main(argv) {
 function printHelp(topic = "") {
   const sections = {
     auth: "auth set-token | auth status | auth clear-token",
-    model: "model list [pi [provider]] | model use <provider[:model]> | model current | model test",
+    model: "model list [pi [provider]|codex] | model use <provider[:model]|codex> | model current | model test",
     stars: "stars sync [--max-pages N] | stars list [--limit N] | stars search <keyword> | stars star <owner/repo> | stars unstar <owner/repo>",
     collections: "collections list | collections show <name> | collections create <name> | collections add <name> <owner/repo> | collections remove <name> <owner/repo> | collections export [file] | collections import <file> [--replace]",
     ai: "ai suggest [--provider mock|pi|openai-compatible] [--model name] [--limit N] | ai status | ai step [--apply] | ai skip | ai review | ai apply | ai clear",
@@ -40,7 +40,7 @@ function printHelp(topic = "") {
 Usage:
   gh-ai-client help [auth|model|stars|collections|ai|data]
   gh-ai-client auth set-token
-  gh-ai-client model use <provider[:model]>
+  gh-ai-client model use <provider[:model]|codex>
   gh-ai-client stars sync
   gh-ai-client ai suggest
   gh-ai-client ai step
@@ -90,6 +90,14 @@ async function authCommand(command, args) {
 async function modelCommand(command, args) {
   const config = await readConfig();
   if (command === "list") {
+    if (args[0] === "codex") {
+      const rows = await listCodexModels();
+      for (const row of rows.slice(0, Number(readOption(args, "--limit") || 30))) {
+        console.log(`pi:${row.provider}/${row.id} - ${row.name || row.id}${row.reasoning ? " / reasoning" : ""}`);
+      }
+      if (rows.length === 0) console.log("No Codex models found in pi.");
+      return;
+    }
     if (args[0] === "pi") {
       const rows = await listPiModels(args[1] || "");
       for (const row of rows.slice(0, Number(readOption(args, "--limit") || 80))) {
@@ -105,7 +113,17 @@ async function modelCommand(command, args) {
   }
   if (command === "use") {
     const value = args[0];
-    if (!value) throw new Error("Usage: gh-ai-client model use <provider[:model]>");
+    if (!value) throw new Error("Usage: gh-ai-client model use <provider[:model]|codex>");
+    if (isCodexAlias(value)) {
+      const model = await recommendedCodexModel();
+      config.ai = { provider: "pi", model: `${model.provider}/${model.id}` };
+      await writeConfig(config);
+      console.log(`Using Codex model through pi: ${config.ai.model}.`);
+      if (model.provider === "openai" && !process.env.OPENAI_API_KEY) {
+        console.log("OpenAI auth is not configured in this shell. Set OPENAI_API_KEY before running: gh-ai-client ai suggest");
+      }
+      return;
+    }
     const [provider, model = defaultModelForProvider(provider)] = value.split(":");
     config.ai = { provider, model };
     await writeConfig(config);
@@ -373,8 +391,13 @@ function collectionRepoArgs(args) {
 
 function defaultModelForProvider(provider) {
   if (provider === "pi") return "openai/gpt-4o-mini";
+  if (provider === "codex") return "auto";
   if (provider === "openai-compatible") return "env";
   return "local-rules";
+}
+
+function isCodexAlias(value) {
+  return ["codex", "pi:codex", "pi:openai/codex"].includes(String(value || "").toLowerCase());
 }
 
 function firstSuggestedAction(suggestions, state = { collections: [] }) {
