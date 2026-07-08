@@ -29,6 +29,7 @@ gh-ai-client auth clear-token
 gh-ai-client model list
 gh-ai-client model list codex
 gh-ai-client model list pi openai
+gh-ai-client model list local
 gh-ai-client model use mock
 gh-ai-client model use codex
 gh-ai-client model use pi:openai/gpt-4o-mini
@@ -83,7 +84,9 @@ GitHub REST supports listing, starring, unstarring, and checking starred reposit
 
 ## AI providers
 
-`mock` works offline and groups by repo metadata. `openai-compatible` uses these environment variables:
+`mock` works offline and groups by repo metadata. It is hidden from the default model list; use `gh-ai-client model list local` if you need the offline fallback.
+
+`openai-compatible` uses these environment variables:
 
 ```bash
 OPENAI_COMPATIBLE_BASE_URL=https://your-model-host/v1

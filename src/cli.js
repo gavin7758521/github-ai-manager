@@ -25,7 +25,7 @@ export async function main(argv) {
 function printHelp(topic = "") {
   const sections = {
     auth: "auth set-token | auth status | auth clear-token",
-    model: "model list [pi [provider]|codex] | model use <provider[:model]|codex> | model current | model test",
+    model: "model list [pi [provider]|codex|local|--all] | model use <provider[:model]|codex> | model current | model test",
     stars: "stars sync [--max-pages N] | stars list [--limit N] | stars search <keyword> | stars star <owner/repo> | stars unstar <owner/repo>",
     collections: "collections list | collections show <name> | collections create <name> | collections add <name> <owner/repo> | collections remove <name> <owner/repo> | collections export [file] | collections import <file> [--replace]",
     ai: "ai suggest [--provider mock|pi|openai-compatible] [--model name] [--limit N] | ai status | ai step [--apply] | ai skip | ai review | ai apply | ai clear",
@@ -90,6 +90,12 @@ async function authCommand(command, args) {
 async function modelCommand(command, args) {
   const config = await readConfig();
   if (command === "list") {
+    if (args[0] === "local") {
+      for (const item of MODEL_PRESETS.filter((preset) => preset.provider === "mock")) {
+        console.log(`${item.provider}:${item.model} - ${item.note}`);
+      }
+      return;
+    }
     if (args[0] === "codex") {
       const rows = await listCodexModels();
       for (const row of rows.slice(0, Number(readOption(args, "--limit") || 30))) {
@@ -106,7 +112,8 @@ async function modelCommand(command, args) {
       if (rows.length === 0) console.log("No pi models found.");
       return;
     }
-    for (const item of MODEL_PRESETS) {
+    const rows = args.includes("--all") ? MODEL_PRESETS : MODEL_PRESETS.filter((preset) => preset.provider !== "mock");
+    for (const item of rows) {
       console.log(`${item.provider}:${item.model} - ${item.note}`);
     }
     return;
