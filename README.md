@@ -26,11 +26,14 @@ gh-ai-client auth set-token
 gh-ai-client auth status
 gh-ai-client auth clear-token
 
+gh-ai-client codex login
+gh-ai-client codex status
+gh-ai-client codex logout
+
 gh-ai-client model list
 gh-ai-client model list codex
 gh-ai-client model list pi openai
 gh-ai-client model list local
-gh-ai-client model use mock
 gh-ai-client model use codex
 gh-ai-client model use pi:openai/gpt-4o-mini
 gh-ai-client model use openai-compatible:env
@@ -50,7 +53,7 @@ gh-ai-client collections export collections.json
 gh-ai-client collections import collections.json
 gh-ai-client collections import collections.json --replace
 
-gh-ai-client ai suggest --provider mock
+gh-ai-client ai suggest
 gh-ai-client ai status
 gh-ai-client ai step
 gh-ai-client ai step --apply
@@ -97,21 +100,23 @@ OPENAI_COMPATIBLE_MODEL=...
 `pi` uses `@earendil-works/pi-ai`:
 
 ```bash
+gh-ai-client codex login
 gh-ai-client model list pi
 gh-ai-client model list pi anthropic --limit 10
 gh-ai-client model list codex
 gh-ai-client model use codex
 gh-ai-client model use pi:openai/gpt-4o-mini
-gh-ai-client ai suggest --provider pi
+gh-ai-client ai suggest
 ```
 
-`model use codex` selects the recommended OpenAI Codex model exposed by pi, such as `openai/gpt-5.3-codex` when available. The selected pi provider still needs its own API key/configuration available to pi.
+`codex login` uses pi's OpenAI Codex OAuth flow and stores credentials locally in `~/.gh-ai-client/pi-auth.json`. `model use codex` selects the recommended OpenAI Codex model exposed by pi, such as `openai-codex/gpt-5.3-codex-spark` when available.
 
 ## Suggested workflow
 
 ```bash
 gh-ai-client auth set-token
 gh-ai-client stars sync
+gh-ai-client codex login
 gh-ai-client model use codex
 gh-ai-client ai suggest
 gh-ai-client ai review

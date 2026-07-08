@@ -1,4 +1,5 @@
 import { readConfig, readJson, writeJson } from "./storage.js";
+import { createPiCredentialStore } from "./pi-auth.js";
 
 export const MODEL_PRESETS = [
   { provider: "mock", model: "local-rules", note: "No external model; groups by language/topics." },
@@ -122,7 +123,7 @@ async function piSuggest(ai, stars, collections) {
   if (!provider || !modelId) {
     throw new Error("pi model must be provider/model, for example: gh-ai-client model use pi:openai/gpt-4o-mini");
   }
-  const models = pi.builtinModels();
+  const models = pi.builtinModels({ credentials: createPiCredentialStore() });
   const model = models.getModel(provider, modelId);
   if (!model) {
     const examples = models.getModels(provider).slice(0, 8).map((item) => `${provider}/${item.id}`).join(", ");
@@ -130,7 +131,7 @@ async function piSuggest(ai, stars, collections) {
   }
   const auth = await models.getAuth(model);
   if (!auth) {
-    throw new Error(`pi model ${provider}/${modelId} is not configured. ${piAuthHint(provider)} Or run: gh-ai-client model use mock`);
+    throw new Error(`pi model ${provider}/${modelId} is not configured. ${piAuthHint(provider)}`);
   }
   const response = await models.completeSimple(model, {
     systemPrompt: "You organize GitHub starred repositories. Return only strict JSON with collections.",
@@ -165,16 +166,20 @@ export async function listPiModels(provider = "") {
 }
 
 export async function listCodexModels() {
-  const rows = await listPiModels("openai");
-  return rows
+  const subscriptionRows = await listPiModels("openai-codex");
+  const apiRows = await listPiModels("openai");
+  const openAiCodexRows = apiRows
     .filter((model) => model.id.toLowerCase().includes("codex"))
     .sort((left, right) => codexModelScore(right.id) - codexModelScore(left.id));
+  return [...subscriptionRows, ...openAiCodexRows];
 }
 
 export async function recommendedCodexModel() {
   const models = await listCodexModels();
-  const exactCodex = models.find((model) => /^gpt-\d+(?:\.\d+)?-codex$/i.test(model.id));
-  const selected = exactCodex || models[0];
+  const subscriptionCodex = models.find((model) => model.provider === "openai-codex" && model.id.toLowerCase().includes("codex"));
+  const subscription = models.find((model) => model.provider === "openai-codex");
+  const exactCodex = models.find((model) => model.provider === "openai" && /^gpt-\d+(?:\.\d+)?-codex$/i.test(model.id));
+  const selected = subscriptionCodex || subscription || exactCodex || models[0];
   if (!selected) throw new Error("No Codex model was found in pi's OpenAI model list.");
   return selected;
 }
@@ -198,6 +203,7 @@ function codexModelScore(id) {
 }
 
 function piAuthHint(provider) {
+  if (provider === "openai-codex") return "Run: gh-ai-client codex login.";
   if (provider === "openai") return "Set OPENAI_API_KEY in this shell.";
   if (provider === "anthropic") return "Set ANTHROPIC_API_KEY in this shell.";
   if (provider === "google") return "Set GEMINI_API_KEY or GOOGLE_API_KEY in this shell.";

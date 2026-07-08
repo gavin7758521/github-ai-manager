@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { applySuggestions, readCollections, writeCollections, addRepoToCollection, removeRepoFromCollection, ensureCollection } from "./collections.js";
 import { listStarredRepos, starRepo, tokenFromConfig, unstarRepo, validateToken } from "./github.js";
 import { MODEL_PRESETS, listCodexModels, listPiModels, recommendedCodexModel, suggestCollections } from "./ai.js";
+import { CODEX_PROVIDER_ID, createPiCredentialStore, readPiCredential } from "./pi-auth.js";
 import { DATA_DIR, appendHistory, dataPath, readConfig, readJson, removeData, writeConfig, writeJson } from "./storage.js";
 
 export async function main(argv) {
@@ -15,6 +16,7 @@ export async function main(argv) {
   }
   if (group === "auth") return authCommand(command, rest);
   if (group === "model") return modelCommand(command, rest);
+  if (group === "codex") return codexCommand(command, rest);
   if (group === "stars") return starsCommand(command, rest);
   if (group === "collections") return collectionsCommand(command, rest);
   if (group === "ai") return aiCommand(command, rest);
@@ -25,10 +27,11 @@ export async function main(argv) {
 function printHelp(topic = "") {
   const sections = {
     auth: "auth set-token | auth status | auth clear-token",
+    codex: "codex login | codex status | codex logout",
     model: "model list [pi [provider]|codex|local|--all] | model use <provider[:model]|codex> | model current | model test",
     stars: "stars sync [--max-pages N] | stars list [--limit N] | stars search <keyword> | stars star <owner/repo> | stars unstar <owner/repo>",
     collections: "collections list | collections show <name> | collections create <name> | collections add <name> <owner/repo> | collections remove <name> <owner/repo> | collections export [file] | collections import <file> [--replace]",
-    ai: "ai suggest [--provider mock|pi|openai-compatible] [--model name] [--limit N] | ai status | ai step [--apply] | ai skip | ai review | ai apply | ai clear",
+    ai: "ai suggest [--provider pi|openai-compatible] [--model name] [--limit N] | ai status | ai step [--apply] | ai skip | ai review | ai apply | ai clear",
     data: "data path | data doctor"
   };
   if (topic && sections[topic]) {
@@ -38,8 +41,9 @@ function printHelp(topic = "") {
   console.log(`gh-ai-client
 
 Usage:
-  gh-ai-client help [auth|model|stars|collections|ai|data]
+  gh-ai-client help [auth|codex|model|stars|collections|ai|data]
   gh-ai-client auth set-token
+  gh-ai-client codex login
   gh-ai-client model use <provider[:model]|codex>
   gh-ai-client stars sync
   gh-ai-client ai suggest
@@ -48,6 +52,7 @@ Usage:
 
 Commands:
   ${sections.auth}
+  ${sections.codex}
   ${sections.model}
   ${sections.stars}
   ${sections.collections}
@@ -85,6 +90,53 @@ async function authCommand(command, args) {
     return;
   }
   printHelp("auth");
+}
+
+async function codexCommand(command) {
+  if (command === "login") {
+    const store = createPiCredentialStore();
+    const models = await createPiModelsWithStore(store);
+    const provider = models.getProvider(CODEX_PROVIDER_ID);
+    if (!provider?.auth?.oauth) throw new Error("pi provider openai-codex does not support OAuth login.");
+    const rl = createInterface({ input, output });
+    try {
+      const credential = await provider.auth.oauth.login({
+        prompt: (prompt) => authLoginPrompt(rl, prompt),
+        notify: notifyAuthEvent
+      });
+      await store.modify(CODEX_PROVIDER_ID, async () => credential);
+      const model = await recommendedCodexModel();
+      const config = await readConfig();
+      config.ai = { provider: "pi", model: `${model.provider}/${model.id}` };
+      await writeConfig(config);
+      console.log(`Saved Codex login and selected ${config.ai.model}.`);
+    } finally {
+      rl.close();
+    }
+    return;
+  }
+  if (command === "status") {
+    const credential = await readPiCredential(CODEX_PROVIDER_ID);
+    const config = await readConfig();
+    if (!credential) {
+      console.log("Codex login is not configured. Run: gh-ai-client codex login");
+      console.log(`Current model: ${config.ai?.provider || "mock"}:${config.ai?.model || "local-rules"}`);
+      return;
+    }
+    const models = await createPiModelsWithStore(createPiCredentialStore());
+    const selected = await recommendedCodexModel();
+    const model = models.getModel(selected.provider, selected.id);
+    const auth = model ? await models.getAuth(model) : null;
+    console.log(`Codex login: ${auth ? `configured via ${auth.source || "OAuth"}` : "stored but not usable"}`);
+    console.log(`Current model: ${config.ai?.provider || "mock"}:${config.ai?.model || "local-rules"}`);
+    return;
+  }
+  if (command === "logout") {
+    await createPiCredentialStore().delete(CODEX_PROVIDER_ID);
+    console.log("Cleared Codex login.");
+    return;
+  }
+  printHelp("codex");
 }
 
 async function modelCommand(command, args) {
@@ -126,7 +178,9 @@ async function modelCommand(command, args) {
       config.ai = { provider: "pi", model: `${model.provider}/${model.id}` };
       await writeConfig(config);
       console.log(`Using Codex model through pi: ${config.ai.model}.`);
-      if (model.provider === "openai" && !process.env.OPENAI_API_KEY) {
+      if (model.provider === CODEX_PROVIDER_ID && !await readPiCredential(CODEX_PROVIDER_ID)) {
+        console.log("Codex login is not configured. Run: gh-ai-client codex login");
+      } else if (model.provider === "openai" && !process.env.OPENAI_API_KEY) {
         console.log("OpenAI auth is not configured in this shell. Set OPENAI_API_KEY before running: gh-ai-client ai suggest");
       }
       return;
@@ -401,6 +455,48 @@ function defaultModelForProvider(provider) {
   if (provider === "codex") return "auto";
   if (provider === "openai-compatible") return "env";
   return "local-rules";
+}
+
+async function createPiModelsWithStore(store) {
+  const pi = await import("@earendil-works/pi-ai/providers/all");
+  return pi.builtinModels({ credentials: store });
+}
+
+async function authLoginPrompt(rl, prompt) {
+  if (prompt.type === "select") {
+    console.log(`\n${prompt.message}`);
+    prompt.options.forEach((option, index) => {
+      console.log(`  ${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ""}`);
+    });
+    const answer = (await questionWithSignal(rl, `Enter number (1-${prompt.options.length}, default 1): `, prompt.signal)).trim();
+    const index = answer ? Number(answer) - 1 : 0;
+    return prompt.options[index]?.id || prompt.options[0]?.id || "";
+  }
+  const suffix = prompt.placeholder ? ` (${prompt.placeholder})` : "";
+  return questionWithSignal(rl, `${prompt.message}${suffix}: `, prompt.signal);
+}
+
+async function questionWithSignal(rl, message, signal) {
+  try {
+    return await rl.question(message, signal ? { signal } : undefined);
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("Login prompt was cancelled.");
+    throw error;
+  }
+}
+
+function notifyAuthEvent(event) {
+  if (event.type === "auth_url") {
+    console.log(`\nOpen this URL in your browser:\n${event.url}`);
+    if (event.instructions) console.log(event.instructions);
+    return;
+  }
+  if (event.type === "device_code") {
+    console.log(`\nOpen this URL in your browser:\n${event.verificationUri}`);
+    console.log(`Enter code: ${event.userCode}`);
+    return;
+  }
+  if (event.type === "progress") console.log(event.message);
 }
 
 function isCodexAlias(value) {
