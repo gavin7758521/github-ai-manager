@@ -8,7 +8,7 @@ export const MODEL_PRESETS = [
   { provider: "openai-compatible", model: "env", note: "Uses OPENAI_COMPATIBLE_* environment variables." }
 ];
 
-export async function planGitHubActions({ prompt, stars = [], lists = [], limit = 120 } = {}) {
+export async function planGitHubActions({ prompt, stars = [], lists = [], history = [], pendingPlan = null, limit = 120 } = {}) {
   const message = String(prompt || "").trim();
   if (!message) throw new Error("Prompt is required.");
   const config = await readConfig();
@@ -20,7 +20,7 @@ export async function planGitHubActions({ prompt, stars = [], lists = [], limit 
   if (!ai.provider) {
     throw new Error("No AI model configured. Run: ghac codex login, then ghac model use codex");
   }
-  const text = await completeText(ai, buildActionPlanMessages(message, stars, lists, limit), config, {
+  const text = await completeText(ai, buildActionPlanMessages(message, stars, lists, history, pendingPlan, limit), config, {
     systemPrompt: "You help manage GitHub starred repositories and GitHub Star Lists. Return only strict JSON."
   });
   const parsed = parseActionPlan(text);
@@ -148,7 +148,7 @@ export async function recommendedCodexModel() {
   return selected;
 }
 
-function buildActionPlanMessages(prompt, stars, lists, limit) {
+function buildActionPlanMessages(prompt, stars, lists, history, pendingPlan, limit) {
   const repoSample = stars.slice(0, limit).map((repo) => ({
     full_name: repo.full_name,
     description: repo.description,
@@ -166,6 +166,11 @@ function buildActionPlanMessages(prompt, stars, lists, limit) {
     private: list.private,
     repos: (list.repos || []).map((repo) => repo.full_name)
   }));
+  const conversation = history.slice(-12).map((item) => ({
+    role: item.role,
+    content: item.content,
+    actions: Array.isArray(item.actions) ? item.actions.map(compactAction) : undefined
+  }));
   return [
     {
       role: "system",
@@ -174,14 +179,38 @@ function buildActionPlanMessages(prompt, stars, lists, limit) {
         "{\"reply\":\"short Chinese response\",\"actions\":[{\"type\":\"create_list\",\"name\":\"...\",\"description\":\"...\",\"private\":false},{\"type\":\"add_repo_to_list\",\"repo\":\"owner/repo\",\"list\":\"...\",\"create\":true},{\"type\":\"remove_repo_from_list\",\"repo\":\"owner/repo\",\"list\":\"...\"}]}",
         "Use actions only when the user is asking to organize or change GitHub Star Lists.",
         "Do not invent repository names. Use repos from context unless the user explicitly writes an owner/repo.",
+        "Use conversation and pendingPlan when the current request refers to earlier turns.",
+        "When modifying a previous plan, return the complete replacement actions, not only a diff.",
         "For unclear requests, return no actions and ask a concise clarification in reply."
       ].join("\n")
     },
     {
       role: "user",
-      content: JSON.stringify({ request: prompt, stars: repoSample, lists: listSample }, null, 2)
+      content: JSON.stringify({
+        request: prompt,
+        conversation,
+        pendingPlan: pendingPlan ? {
+          reply: pendingPlan.reply || "",
+          actions: (pendingPlan.actions || []).map(compactAction)
+        } : null,
+        stars: repoSample,
+        lists: listSample
+      }, null, 2)
     }
   ];
+}
+
+function compactAction(action) {
+  if (!action || typeof action !== "object") return action;
+  return {
+    type: action.type,
+    repo: action.repo,
+    list: action.list,
+    name: action.name,
+    description: action.description,
+    private: action.private,
+    create: action.create
+  };
 }
 
 function parseActionPlan(content) {

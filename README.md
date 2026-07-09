@@ -105,8 +105,15 @@ Inside the shell, natural language reads live GitHub data, asks the configured m
 /lists add "AI Tools" openai/codex
 /plan 帮我整理最近 star 的 RAG 仓库
 /apply
+/context
+/refresh
+/forget
 /exit
 ```
+
+`ghac ai` keeps conversation history, the latest plan, and the latest GitHub context in memory while the shell is running. It does not write that session memory to disk.
+
+Use `/context` to inspect the current in-memory state, `/refresh` to reload GitHub online data, and `/forget` to clear conversation memory and the pending plan.
 
 Command-line `ghac ai plan ...` prints a plan but does not save it. Use `ghac ai` when you want to apply a plan.
 

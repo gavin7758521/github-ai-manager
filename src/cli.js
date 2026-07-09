@@ -327,7 +327,7 @@ async function aiCommand(command, args) {
 }
 
 async function startAiRepl() {
-  const session = { plan: null };
+  const session = { plan: null, history: [], context: null };
   const rl = createInterface({ input, output });
   console.log("ghac ai interactive shell. Type /help for commands, /exit to quit.");
   try {
@@ -374,10 +374,12 @@ async function runAiReplCommand(rl, line, session) {
   }
   if (command === "stars") {
     await starsCommand(subcommand, rest);
+    if (["star", "unstar"].includes(subcommand)) invalidateSessionGitHubState(session);
     return false;
   }
   if (command === "lists") {
     await listsCommand(subcommand, rest);
+    if (["create", "add", "remove"].includes(subcommand)) invalidateSessionGitHubState(session);
     return false;
   }
   if (command === "data") {
@@ -386,7 +388,7 @@ async function runAiReplCommand(rl, line, session) {
   }
   if (command === "plan") {
     if (subcommand) {
-      session.plan = await createPlanFromLiveGitHub([subcommand, ...rest].join(" "));
+      session.plan = await createPlanFromSession([subcommand, ...rest].join(" "), session);
       printPlan(session.plan);
     } else {
       printPlan(session.plan || { actions: [] });
@@ -402,14 +404,29 @@ async function runAiReplCommand(rl, line, session) {
     const answer = (await rl.question("Apply this plan to GitHub? [y/N]: ")).trim().toLowerCase();
     if (["y", "yes"].includes(answer)) {
       const applied = await applyGitHubPlan(session.plan);
+      rememberTurn(session, {
+        role: "system",
+        content: `Applied ${applied.length} GitHub actions from the pending plan.`
+      });
       session.plan = null;
+      session.context = null;
       console.log(`Applied ${applied.length} plan actions.`);
     }
     return false;
   }
-  if (command === "clear") {
+  if (command === "refresh") {
+    await loadSessionGitHubContext(session, { force: true });
+    printSessionContext(session);
+    return false;
+  }
+  if (command === "context") {
+    printSessionContext(session);
+    return false;
+  }
+  if (command === "forget" || command === "clear") {
+    session.history = [];
     session.plan = null;
-    console.log("Cleared pending in-memory AI plan.");
+    console.log("Cleared in-memory conversation and pending plan. GitHub context remains in memory; use /refresh to reload it.");
     return false;
   }
   console.log(`Unknown AI shell command "/${command}". Type /help.`);
@@ -417,27 +434,94 @@ async function runAiReplCommand(rl, line, session) {
 }
 
 async function handleNaturalAiInput(rl, text, session) {
-  session.plan = await createPlanFromLiveGitHub(text);
+  session.plan = await createPlanFromSession(text, session);
   printPlan(session.plan);
   if (!session.plan.actions?.length) return;
   const answer = (await rl.question("Apply this plan to GitHub now? [y/N]: ")).trim().toLowerCase();
   if (["y", "yes"].includes(answer)) {
     const applied = await applyGitHubPlan(session.plan);
+    rememberTurn(session, {
+      role: "system",
+      content: `Applied ${applied.length} GitHub actions from the pending plan.`
+    });
     session.plan = null;
+    session.context = null;
     console.log(`Applied ${applied.length} plan actions.`);
+  } else {
+    rememberTurn(session, {
+      role: "system",
+      content: "User did not apply the pending plan."
+    });
   }
 }
 
 async function createPlanFromLiveGitHub(prompt) {
+  const session = { plan: null, history: [], context: null };
+  return createPlanFromSession(prompt, session);
+}
+
+async function createPlanFromSession(prompt, session) {
+  const context = await loadSessionGitHubContext(session);
+  const plan = await planGitHubActions({
+    prompt,
+    stars: context.stars,
+    lists: context.lists,
+    history: session.history,
+    pendingPlan: session.plan
+  });
+  rememberTurn(session, { role: "user", content: prompt });
+  rememberTurn(session, {
+    role: "assistant",
+    content: plan.reply || "",
+    actions: plan.actions || []
+  });
+  return plan;
+}
+
+async function loadSessionGitHubContext(session, { force = false } = {}) {
+  if (session.context && !force) return session.context;
   const config = await readConfig();
   await applyProxyConfig(config);
   const token = tokenFromConfig(config);
-  console.log("Reading live GitHub stars and Star Lists...");
+  console.log(force ? "Refreshing live GitHub stars and Star Lists..." : "Reading live GitHub stars and Star Lists...");
   const [stars, listState] = await Promise.all([
     listStarredRepos(token),
     listGitHubLists(token, { includeItems: true })
   ]);
-  return planGitHubActions({ prompt, stars, lists: listState.lists || [] });
+  session.context = {
+    loadedAt: new Date().toISOString(),
+    stars,
+    lists: listState.lists || []
+  };
+  return session.context;
+}
+
+function rememberTurn(session, turn) {
+  session.history.push(turn);
+  if (session.history.length > 30) session.history = session.history.slice(-30);
+}
+
+function printSessionContext(session) {
+  const context = session.context;
+  console.log(`Conversation turns: ${session.history.length}`);
+  console.log(`Pending plan actions: ${session.plan?.actions?.length || 0}`);
+  if (!context) {
+    console.log("GitHub context: not loaded in this session");
+    return;
+  }
+  console.log(`GitHub context loaded: ${context.loadedAt}`);
+  console.log(`Stars in memory: ${context.stars.length}`);
+  console.log(`Star Lists in memory: ${context.lists.length}`);
+  const assignments = context.lists.reduce((total, list) => total + (list.repos?.length || 0), 0);
+  console.log(`List repo assignments in memory: ${assignments}`);
+}
+
+function invalidateSessionGitHubState(session) {
+  session.context = null;
+  if (session.plan) {
+    session.plan = null;
+    console.log("Cleared pending plan because GitHub data changed.");
+  }
 }
 
 async function applyGitHubPlan(plan) {
@@ -483,9 +567,11 @@ function printAiReplHelp() {
   /lists list|show|create|add|remove
   /plan [natural language request]
   /apply
-  /clear
+  /context
+  /refresh
+  /forget
 
-Natural language input reads live GitHub data, asks the configured model for a plan, and asks before writing.`);
+Natural language input reuses current session memory and GitHub context, asks the configured model for a plan, and asks before writing.`);
 }
 
 function printPlan(plan) {
