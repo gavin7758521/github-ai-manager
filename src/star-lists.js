@@ -112,6 +112,16 @@ const UPDATE_ITEM_LISTS_MUTATION = `
   }
 `;
 
+const DELETE_LIST_MUTATION = `
+  mutation DeleteUserList($input: DeleteUserListInput!) {
+    deleteUserList(input: $input) {
+      user {
+        login
+      }
+    }
+  }
+`;
+
 export async function listGitHubLists(token, { includeItems = true } = {}) {
   const lists = [];
   let viewer = null;
@@ -152,6 +162,28 @@ export async function createGitHubList(token, { name, description = "", isPrivat
     }
   });
   return normalizeList(data.createUserList.list);
+}
+
+export async function deleteGitHubList(token, name) {
+  const state = await listGitHubLists(token, { includeItems: false });
+  const list = findListInState(state, name);
+  if (!list) {
+    return {
+      changed: false,
+      name: cleanListName(name),
+      list: null
+    };
+  }
+  await githubGraphql(token, DELETE_LIST_MUTATION, {
+    input: {
+      listId: list.id
+    }
+  });
+  return {
+    changed: true,
+    name: list.name,
+    list
+  };
 }
 
 export async function addRepoToGitHubList(token, listName, fullName, { create = false, star = true } = {}) {

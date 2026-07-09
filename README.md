@@ -60,6 +60,7 @@ gham lists create "AI Tools" --description "AI projects and agents" --private
 gham lists add "AI Tools" openai/codex
 gham lists add "AI Tools" openai/codex --create
 gham lists remove "AI Tools" openai/codex
+gham lists delete "AI Tools" --yes
 
 gham cli
 gham cli plan "帮我把 AI agent 相关仓库整理到 AI-智能体"
@@ -112,6 +113,7 @@ Inside the shell, natural language reads live GitHub data, asks the configured m
 /stars list
 /lists list
 /lists add "AI Tools" openai/codex
+/lists delete "AI Tools" --yes
 /plan 帮我整理最近 star 的 RAG 仓库
 /apply
 /context
@@ -159,7 +161,20 @@ lists_show
 lists_create
 lists_add_repo
 lists_remove_repo
+lists_delete
 ```
+
+## GitHub API Pacing
+
+GitHub API calls are serialized with light pacing to reduce secondary rate-limit and abuse-detection risk. Defaults:
+
+```bash
+GHAM_GITHUB_READ_DELAY_MS=150
+GHAM_GITHUB_WRITE_DELAY_MS=1000
+GHAM_GITHUB_MAX_RETRIES=2
+```
+
+Increase `GHAM_GITHUB_WRITE_DELAY_MS` before large batch Star List edits if GitHub begins returning rate-limit or abuse-detection responses.
 
 ## AI Providers
 

@@ -176,7 +176,7 @@ function buildActionPlanMessages(prompt, stars, lists, history, pendingPlan, lim
       role: "system",
       content: [
         "Return only strict JSON with this shape:",
-        "{\"reply\":\"short Chinese response\",\"actions\":[{\"type\":\"create_list\",\"name\":\"...\",\"description\":\"...\",\"private\":false},{\"type\":\"add_repo_to_list\",\"repo\":\"owner/repo\",\"list\":\"...\",\"create\":true},{\"type\":\"remove_repo_from_list\",\"repo\":\"owner/repo\",\"list\":\"...\"}]}",
+        "{\"reply\":\"short Chinese response\",\"actions\":[{\"type\":\"create_list\",\"name\":\"...\",\"description\":\"...\",\"private\":false},{\"type\":\"add_repo_to_list\",\"repo\":\"owner/repo\",\"list\":\"...\",\"create\":true},{\"type\":\"remove_repo_from_list\",\"repo\":\"owner/repo\",\"list\":\"...\"},{\"type\":\"delete_list\",\"name\":\"...\"}]}",
         "Use actions only when the user is asking to organize or change GitHub Star Lists.",
         "Do not invent repository names. Use repos from context unless the user explicitly writes an owner/repo.",
         "Use conversation and pendingPlan when the current request refers to earlier turns.",
@@ -233,6 +233,14 @@ function normalizeAction(action) {
       name,
       description: String(action.description || ""),
       private: Boolean(action.private)
+    };
+  }
+  if (type === "delete_list") {
+    const name = String(action.name || "").trim();
+    if (!name) return null;
+    return {
+      type,
+      name
     };
   }
   if (type === "add_repo_to_list" || type === "remove_repo_from_list") {

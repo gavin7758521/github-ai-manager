@@ -5,7 +5,7 @@ import { listStarredRepos, starRepo, tokenFromConfig, unstarRepo, validateToken 
 import { CODEX_PROVIDER_ID, createPiCredentialStore, readPiCredential } from "./pi-auth.js";
 import { runMcpServer } from "./mcp-server.js";
 import { applyProxyConfig, normalizeProxyConfig, proxyStatusLines } from "./proxy.js";
-import { addRepoToGitHubList, createGitHubList, getGitHubList, listGitHubLists, removeRepoFromGitHubList } from "./star-lists.js";
+import { addRepoToGitHubList, createGitHubList, deleteGitHubList, getGitHubList, listGitHubLists, removeRepoFromGitHubList } from "./star-lists.js";
 import { DATA_DIR, dataPath, readConfig, writeConfig } from "./storage.js";
 
 export async function main(argv) {
@@ -34,7 +34,7 @@ function printHelp(topic = "") {
     codex: "codex login | codex status | codex logout",
     model: "model list [pi [provider]|codex|--all] | model use <provider[:model]|codex> | model current | model test",
     stars: "stars list [--limit N] [--max-pages N] | stars search <keyword> [--max-pages N] | stars star <owner/repo> | stars unstar <owner/repo>",
-    lists: "lists list | lists show <name> | lists create <name> [--description text] [--private] | lists add <name> <owner/repo> [--create] | lists remove <name> <owner/repo>",
+    lists: "lists list | lists show <name> | lists create <name> [--description text] [--private] | lists add <name> <owner/repo> [--create] | lists remove <name> <owner/repo> | lists delete <name> --yes",
     cli: "cli | cli plan <prompt>",
     mcp: "mcp serve",
     data: "data path | data doctor"
@@ -312,6 +312,16 @@ async function listsCommand(command, args) {
     console.log(`${result.changed ? "Removed" : "Not in list"}: ${result.repo} -> ${result.list.name}.`);
     return;
   }
+  if (command === "delete") {
+    const name = positionalArgs(args, [], ["--yes"]).join(" ");
+    if (!name) throw new Error("Usage: gham lists delete <name> --yes");
+    if (!args.includes("--yes")) {
+      throw new Error(`Deleting a GitHub Star List is permanent. Re-run with: gham lists delete "${name}" --yes`);
+    }
+    const result = await deleteGitHubList(token, name);
+    console.log(`${result.changed ? "Deleted" : "Not found"}: ${result.name}.`);
+    return;
+  }
   printHelp("lists");
 }
 
@@ -392,7 +402,7 @@ async function runCliReplCommand(rl, line, session) {
   }
   if (command === "lists") {
     await listsCommand(subcommand, rest);
-    if (["create", "add", "remove"].includes(subcommand)) invalidateSessionGitHubState(session);
+    if (["create", "add", "remove", "delete"].includes(subcommand)) invalidateSessionGitHubState(session);
     return false;
   }
   if (command === "data") {
@@ -565,6 +575,11 @@ async function applyGitHubPlan(plan) {
       applied.push({ type: action.type, repo: result.repo, list: result.list.name, changed: result.changed });
       continue;
     }
+    if (action.type === "delete_list") {
+      const result = await deleteGitHubList(token, action.name);
+      applied.push({ type: action.type, list: result.name, changed: result.changed });
+      continue;
+    }
     throw new Error(`Unsupported plan action "${action.type}".`);
   }
   return applied;
@@ -577,7 +592,7 @@ function printCliReplHelp() {
   /model [current|list|use ...]
   /auth status
   /stars list|search|star|unstar
-  /lists list|show|create|add|remove
+  /lists list|show|create|add|remove|delete
   /plan [natural language request]
   /apply
   /context
@@ -604,6 +619,7 @@ function formatPlanAction(action) {
   if (action.type === "create_list") return `create list "${action.name}"${action.private ? " (private)" : ""}`;
   if (action.type === "add_repo_to_list") return `add ${action.repo} to "${action.list}"${action.create ? " (create list if missing)" : ""}`;
   if (action.type === "remove_repo_from_list") return `remove ${action.repo} from "${action.list}"`;
+  if (action.type === "delete_list") return `delete list "${action.name}"`;
   return JSON.stringify(action);
 }
 

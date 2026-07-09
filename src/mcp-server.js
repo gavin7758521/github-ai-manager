@@ -1,6 +1,6 @@
 import { listStarredRepos, starRepo, tokenFromConfig, unstarRepo } from "./github.js";
 import { applyProxyConfig } from "./proxy.js";
-import { addRepoToGitHubList, createGitHubList, getGitHubList, listGitHubLists, removeRepoFromGitHubList } from "./star-lists.js";
+import { addRepoToGitHubList, createGitHubList, deleteGitHubList, getGitHubList, listGitHubLists, removeRepoFromGitHubList } from "./star-lists.js";
 import { readConfig } from "./storage.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -77,6 +77,13 @@ const tools = [
       list: stringSchema("Star List name or slug.", true),
       repo: stringSchema("Repository full name, for example owner/repo.", true)
     }, ["list", "repo"])
+  },
+  {
+    name: "lists_delete",
+    description: "Delete a GitHub Star List. This removes the list, not the repositories' stars.",
+    inputSchema: objectSchema({
+      name: stringSchema("Star List name or slug.", true)
+    }, ["name"])
   }
 ];
 
@@ -129,7 +136,7 @@ async function handleRequest(request) {
       },
       serverInfo: {
         name: "github-ai-manager",
-        version: "0.1.0"
+        version: "0.1.1"
       },
       instructions: [
         "Use these tools to manage the authenticated user's GitHub stars and GitHub Star Lists.",
@@ -215,6 +222,10 @@ async function runTool(name, args, token) {
   }
   if (name === "lists_remove_repo") {
     const result = await removeRepoFromGitHubList(token, requiredString(args.list, "list"), requiredString(args.repo, "repo"));
+    return { ok: true, ...result };
+  }
+  if (name === "lists_delete") {
+    const result = await deleteGitHubList(token, requiredString(args.name, "name"));
     return { ok: true, ...result };
   }
   throw new Error(`Unknown tool "${name}".`);
